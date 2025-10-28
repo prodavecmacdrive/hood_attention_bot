@@ -1,0 +1,55 @@
+# Environment variables
+.env
+
+# Telegram session files (СЕКРЕТНО!)
+*.session
+*.session-journal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.so
+
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Database (может содержать личные данные)
+telegram_bot.db
+telegram_bot.db-shm
+telegram_bot.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Configuration (API ключи - СЕКРЕТНО!)
+config.py
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Test outputs
+test_output.txt
+test_debug.txt
+
+# Backup files
+*.backup
+
+# ML models cache
+.cache/
+models/
+sentence-transformers/
