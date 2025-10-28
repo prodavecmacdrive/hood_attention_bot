@@ -23,15 +23,15 @@ env/
 *.swp
 *.swo
 
-# Database (может содержать личные данные)
-telegram_bot.db
-telegram_bot.db-shm
-telegram_bot.db-wal
-*.db
-*.db-shm
-*.db-wal
+# Database - ДЛЯ ГІЛКИ trained-model ДОЗВОЛЕНО!
+# telegram_bot.db
+# telegram_bot.db-shm
+# telegram_bot.db-wal
+# *.db
+# *.db-shm
+# *.db-wal
 
-# Configuration (API ключи - СЕКРЕТНО!)
+# Configuration (API ключі - СЕКРЕТНО!)
 config.py
 
 # OS
@@ -49,7 +49,7 @@ test_debug.txt
 # Backup files
 *.backup
 
-# ML models cache
-.cache/
-models/
-sentence-transformers/
+# ML models cache - ДЛЯ ГІЛКИ trained-model ДОЗВОЛЕНО!
+# .cache/
+# models/
+# sentence-transformers/
