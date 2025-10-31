@@ -132,6 +132,19 @@ class Database:
                 FOREIGN KEY (user_id) REFERENCES user_settings(user_id)
             )
         ''')
+
+        # Таблица для хранения истории сообщений из каналов
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS historical_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_username TEXT NOT NULL,
+                message_id INTEGER NOT NULL,
+                message_text TEXT,
+                message_date TIMESTAMP NOT NULL,
+                embedding BLOB,
+                UNIQUE(channel_username, message_id)
+            )
+        ''')
         
         # Таблица оптимизированных ключевых слов по районам
         cursor.execute('''
@@ -1115,4 +1128,59 @@ class Database:
         except Exception as e:
             logger.error(f"Ошибка очистки негативных примеров: {e}")
             return False
+
+    # === ИСТОРИЯ СООБЩЕНИЙ ===
+
+    def add_historical_message(self, channel_username: str, message_id: int, message_text: str, message_date, embedding: bytes = None):
+        """Добавить сообщение из истории в базу данных"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                '''INSERT OR IGNORE INTO historical_messages 
+                   (channel_username, message_id, message_text, message_date, embedding) 
+                   VALUES (?, ?, ?, ?, ?)''',
+                (channel_username, message_id, message_text, message_date, embedding)
+            )
+            conn.commit()
+            conn.close()
+            return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Ошибка добавления исторического сообщения: {e}")
+            return False
+
+    def get_recent_historical_messages(self, minutes_ago: int = 30) -> List[Tuple]:
+        """Получить недавние сообщения из всех каналов"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT channel_username, message_id, message_text, message_date, embedding 
+                   FROM historical_messages 
+                   WHERE message_date >= datetime('now', ?, 'localtime')
+                   ORDER BY message_date DESC""",
+                (f'-{minutes_ago} minutes',)
+            )
+            messages = cursor.fetchall()
+            conn.close()
+            return messages
+        except Exception as e:
+            logger.error(f"Ошибка получения недавних исторических сообщений: {e}")
+            return []
+
+    def get_latest_message_date(self, channel_username: str):
+        """Получить дату последнего сохраненного сообщения для канала"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT MAX(message_date) FROM historical_messages WHERE channel_username = ?",
+                (channel_username,)
+            )
+            result = cursor.fetchone()
+            conn.close()
+            return result[0] if result and result[0] else None
+        except Exception as e:
+            logger.error(f"Ошибка получения даты последнего сообщения: {e}")
+            return None
 

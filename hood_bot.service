@@ -1,0 +1,21 @@
+[Unit]
+Description=Telegram Hood Attention Bot
+After=network.target
+
+[Service]
+Type=simple
+User=your_username
+WorkingDirectory=/path/to/attantion_bot
+ExecStart=/path/to/attantion_bot/venv/bin/python /path/to/attantion_bot/main.py
+Restart=always
+RestartSec=10
+
+# Environment
+Environment="PYTHONUNBUFFERED=1"
+
+# Логи
+StandardOutput=append:/var/log/hood_bot.log
+StandardError=append:/var/log/hood_bot_error.log
+
+[Install]
+WantedBy=multi-user.target

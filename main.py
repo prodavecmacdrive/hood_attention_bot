@@ -4,61 +4,67 @@ from database import Database
 from wizard import get_user_state, set_user_state, clear_user_state, get_wizard_data
 from ml_matcher import get_matcher, MessageMatcher
 from admin_help import optimize_all_districts
+from history_loader import HistoryLoader
+from context_analyzer import ContextAnalyzer
 import logging
+import asyncio
 
-# Налаштування логування
+# Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Створення клієнтів
-user_client = TelegramClient('bot_session', API_ID, API_HASH)  # User-акаунт для парсингу
-bot_client = TelegramClient('bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)  # Бот для керування
+# Создание клиентов
+user_client = TelegramClient('bot_session', API_ID, API_HASH)  # User-аккаунт для парсинга
+bot_client = TelegramClient('bot', API_ID, API_HASH).start(bot_token=BOT_TOKEN)  # Бот для управления
 
 db = Database()
 
-# ML модель (ледаче ініціалізація при першому використанні)
+# ML модель (ленивая инициализация при первом использовании)
 matcher = None
 
-# ID адміністратора (ваш ID в Telegram)
-ADMIN_ID = None  # Буде встановлено при запуску
+# ID администратора (ваш ID в Telegram)
+ADMIN_ID = None  # Будет установлен при запуске
 
-# Тимчасове сховище для текстів повідомлень (для кнопок feedback)
-# Ключ: (user_id, msg_id), Значення: текст повідомлення
+# Временное хранилище для текстов сообщений (для кнопок feedback)
+# Ключ: (user_id, msg_id), Значение: текст сообщения
 message_cache = {}
 
+# Инициализация контекстного анализатора
+context_analyzer = ContextAnalyzer(db)
 
-# === МЕНЮ З КНОПКАМИ ===
+
+# === МЕНЮ С КНОПКАМИ ===
 
 def get_main_menu():
-    """Головне меню з постійними кнопками"""
+    """Главное меню с постоянными кнопками"""
     return [
-        [Button.text("📺 Канали", resize=True), Button.text("🔑 Слова", resize=True)],
-        [Button.text("🤖 ML Приклади", resize=True), Button.text("🔄 Режим", resize=True)],
-        [Button.text("📊 Статус", resize=True), Button.text("❓ Допомога", resize=True)]
+        [Button.text("📺 Каналы", resize=True), Button.text("🔑 Слова", resize=True)],
+        [Button.text("🤖 ML Примеры", resize=True), Button.text("🔄 Режим", resize=True)],
+        [Button.text("📊 Статус", resize=True), Button.text("❓ Помощь", resize=True)]
     ]
 
 
-# === КОМАНДИ ===
+# === КОМАНДЫ ===
 
 @bot_client.on(events.NewMessage(pattern='/start'))
 async def start_handler(event):
-    """Команда /start з головним меню"""
+    """Команда /start с главным меню"""
     user_id = event.sender_id
     district_id, setup_completed = db.get_user_settings(user_id)
     
     if not setup_completed:
         await event.respond(
-            "👋 **Вітаємо!**\n\n"
-            "Налаштуймо бота для моніторингу каналів.\n\n"
-            "Використовуйте /setup для покрокового налаштування"
+            "👋 **Добро пожаловать!**\n\n"
+            "Давайте настроим бота для мониторинга каналов.\n\n"
+            "Используйте /setup для пошаговой настройки"
         )
     else:
         await event.respond(
-            "🤖 **Бот для моніторингу Telegram каналів**\n\n"
-            "Використовуйте кнопки меню нижче ⬇️",
+            "🤖 **Бот для мониторинга Telegram каналов**\n\n"
+            "Используйте кнопки меню ниже ⬇️",
             buttons=get_main_menu()
         )
 
@@ -74,7 +80,7 @@ async def setup_handler(event):
     # По умолчанию выбираем ВСЕ каналы
     selected_channels = [username for username, name, desc in preset_channels]
     
-    # Сохраняем начальное состояние с выбранными каналуми
+    # Сохраняем начальное состояние с выбранными каналами
     set_user_state(user_id, 'select_channels', {'selected_channels': selected_channels})
     
     buttons = []
@@ -85,10 +91,10 @@ async def setup_handler(event):
     buttons.append([Button.inline("➡️ Далее", "channels_done")])
     
     await event.respond(
-        "**Шаг 1/3: Выбор каналів**\n\n"
-        f"Выбрано каналів: {len(selected_channels)}\n\n"
+        "**Шаг 1/3: Выбор каналов**\n\n"
+        f"Выбрано каналов: {len(selected_channels)}\n\n"
         "Выберите каналы для мониторинга:\n"
-        "(нажмите на канал чтобы додати/видалити)",
+        "(нажмите на канал чтобы добавить/удалить)",
         buttons=buttons
     )
 
@@ -97,7 +103,7 @@ async def setup_handler(event):
 
 @bot_client.on(events.CallbackQuery(pattern=b'channel_(.+)'))
 async def channel_select_callback(event):
-    """Выбор/отмена выбора каналу"""
+    """Выбор/отмена выбора канала"""
     try:
         # Подтверждаем получение callback
         try:
@@ -133,18 +139,18 @@ async def channel_select_callback(event):
         buttons.append([Button.inline("➡️ Далее", "channels_done")])
         
         await event.edit(
-            f"**Шаг 1/3: Выбор каналів**\n\n"
-            f"Выбрано каналів: {len(selected)}\n\n"
+            f"**Шаг 1/3: Выбор каналов**\n\n"
+            f"Выбрано каналов: {len(selected)}\n\n"
             f"Выберите каналы для мониторинга:",
             buttons=buttons
         )
     except Exception as e:
-        logger.error(f"Помилка в channel_select_callback: {e}")
+        logger.error(f"Ошибка в channel_select_callback: {e}")
 
 
 @bot_client.on(events.CallbackQuery(pattern=b'channels_done'))
 async def channels_done_callback(event):
-    """Завершение выбора каналів"""
+    """Завершение выбора каналов"""
     try:
         # Подтверждаем получение callback
         try:
@@ -170,12 +176,12 @@ async def channels_done_callback(event):
         await event.edit(
             "**Шаг 2/3: Выбор района**\n\n"
             "📍 Введите название вашего района Харькова.\n\n"
-            "Наприклад: `Салтовка`, `Павлово Поле`, `ХТЗ`\n\n"
+            "Например: `Салтовка`, `Павлово Поле`, `ХТЗ`\n\n"
             "Начните вводить, и я покажу подходящие варианты.",
             buttons=None
         )
     except Exception as e:
-        logger.error(f"Помилка в channels_done_callback: {e}")
+        logger.error(f"Ошибка в channels_done_callback: {e}")
 
 
 # Обработчик ввода района
@@ -204,7 +210,7 @@ async def text_input_handler(event):
                 f"🔍 По запросу `{text}` ничего не найдено.\n\n"
                 "💡 **Советы:**\n"
                 "• Проверьте правописание\n"
-                "• Попробуйте ввести часть названия (наприклад: `салт`, `хтз`, `павлов`)\n"
+                "• Попробуйте ввести часть названия (например: `салт`, `хтз`, `павлов`)\n"
                 "• Используйте команду /cancel для отмены\n\n"
                 "📝 Примеры: `Салтовка`, `ХТЗ`, `Павлово Поле`, `602`",
                 buttons=[[Button.inline("❌ Отмена", "setup_cancel")]]
@@ -243,9 +249,9 @@ async def text_input_handler(event):
             buttons=buttons
         )
     except Exception as e:
-        logger.error(f"Помилка поиска района: {e}", exc_info=True)
+        logger.error(f"Ошибка поиска района: {e}", exc_info=True)
         await event.respond(
-            f"❌ Помилка поиска: {e}",
+            f"❌ Ошибка поиска: {e}",
             buttons=[[Button.inline("❌ Отмена", "setup_cancel")]]
         )
 
@@ -298,12 +304,12 @@ async def district_select_callback(event):
             buttons=buttons
         )
     except Exception as e:
-        logger.error(f"Помилка в district_select_callback: {e}")
+        logger.error(f"Ошибка в district_select_callback: {e}")
 
 
 @bot_client.on(events.CallbackQuery(pattern=b'kw_(.+)'))
 async def keyword_select_callback(event):
-    """Выбор ключового слова"""
+    """Выбор ключевого слова"""
     try:
         # Подтверждаем получение callback
         try:
@@ -331,18 +337,18 @@ async def keyword_select_callback(event):
         
         await event.answer(f"{'Добавлено' if keyword in selected_kw else 'Удалено'}: {keyword}")
     except Exception as e:
-        logger.error(f"Помилка в keyword_select_callback: {e}")
+        logger.error(f"Ошибка в keyword_select_callback: {e}")
 
 
 @bot_client.on(events.CallbackQuery(pattern=b'custom_keywords'))
 async def custom_keywords_callback(event):
-    """Добавление своих ключових слів"""
+    """Добавление своих ключевых слов"""
     try:
         await event.answer("Отправьте ключевые слова через запятую", alert=True)
         user_id = event.sender_id
         set_user_state(user_id, 'input_keywords', get_user_state(user_id))
     except Exception as e:
-        logger.error(f"Помилка в custom_keywords_callback: {e}")
+        logger.error(f"Ошибка в custom_keywords_callback: {e}")
 
 
 @bot_client.on(events.CallbackQuery(pattern=b'setup_done'))
@@ -367,7 +373,7 @@ async def setup_done_callback(event):
             try:
                 db.add_channel(channel)
             except Exception as e:
-                logger.error(f"Помилка доданоия каналу {channel}: {e}")
+                logger.error(f"Ошибка добавления канала {channel}: {e}")
         
         # Сохраняем ключевые слова В ТАБЛИЦУ user_keywords (для этого пользователя)
         for keyword in selected_keywords:
@@ -380,7 +386,7 @@ async def setup_done_callback(event):
                 if district_id:
                     db.add_district_keyword(district_id, keyword)
             except Exception as e:
-                logger.error(f"Помилка доданоия ключового слова {keyword}: {e}")
+                logger.error(f"Ошибка добавления ключевого слова {keyword}: {e}")
         
         # Завершаем настройку
         db.complete_user_setup(user_id)
@@ -388,20 +394,20 @@ async def setup_done_callback(event):
         
         await event.edit(
             "✅ **Настройка завершена!**\n\n"
-            f"📺 Выбрано каналів: {len(db.get_channels())}\n"
+            f"📺 Выбрано каналов: {len(db.get_channels())}\n"
             f"🔑 Ключевых слов: {len(selected_keywords)}\n\n"
             "Бот начал мониторинг! Используйте /start",
             buttons=None
         )
     except Exception as e:
-        logger.error(f"Помилка в setup_done_callback: {e}")
+        logger.error(f"Ошибка в setup_done_callback: {e}")
 
 
 # === ОБРАБОТЧИКИ КНОПОК МЕНЮ ===
 
 @bot_client.on(events.NewMessage(pattern='📺 Каналы'))
 async def channels_menu_handler(event):
-    """Меню каналів"""
+    """Меню каналов"""
     channels = db.get_channels()
     if channels:
         channel_list = '\n'.join([f"• `{ch}`" for ch in channels])
@@ -415,7 +421,7 @@ async def channels_menu_handler(event):
 
 @bot_client.on(events.NewMessage(pattern='🔑 Слова'))
 async def keywords_menu_handler(event):
-    """Меню ключових слів"""
+    """Меню ключевых слов"""
     user_id = event.sender_id
     
     # Получаем ПЕРСОНАЛЬНЫЕ ключевые слова пользователя
@@ -433,30 +439,30 @@ async def keywords_menu_handler(event):
 
 @bot_client.on(events.NewMessage(pattern='🤖 ML Примеры'))
 async def ml_examples_menu_handler(event):
-    """Меню ML прикладів"""
+    """Меню ML примеров"""
     user_id = event.sender_id
     examples_count = db.get_user_examples_count(user_id)
     
     if examples_count > 0:
         msg = (
             f"🤖 **ML Примеры ({examples_count}):**\n\n"
-            f"У вас сохранено **{examples_count}** прикладів сообщений.\n\n"
-            f"Бот автоматически находит похожие сообщения в каналух используя искусственный интеллект.\n\n"
+            f"У вас сохранено **{examples_count}** примеров сообщений.\n\n"
+            f"Бот автоматически находит похожие сообщения в каналах используя искусственный интеллект.\n\n"
         )
     else:
         msg = (
             "🤖 **ML Примеры:**\n\n"
-            "У вас поки немає прикладів.\n\n"
+            "У вас пока нет примеров.\n\n"
             "**Как это работает:**\n"
             "1. Перешлите боту сообщения, которые вас интересуют\n"
             "2. Бот запомнит их и будет искать похожие\n"
-            "3. Когда в каналух появится похожее сообщение - вы получите уведомление\n\n"
+            "3. Когда в каналах появится похожее сообщение - вы получите уведомление\n\n"
         )
     
     msg += (
         "**Команды:**\n"
-        "• Переслать сообщение боту - додати приклад\n"
-        "`/clear_examples` - очистить все приклады\n"
+        "• Переслать сообщение боту - добавить пример\n"
+        "`/clear_examples` - очистить все примеры\n"
         "`/examples_status` - показать статус ML\n\n"
         "💡 ML работает вместе с ключевыми словами"
     )
@@ -525,7 +531,7 @@ async def mode_menu_handler(event):
             "mode_personal"
         )],
         [Button.inline(
-            f"{opt_emoji} Оптимізований режим",
+            f"{opt_emoji} Оптимизированный режим",
             "mode_optimized"
         )],
         [Button.inline("🔙 Назад", "main_menu")]
@@ -534,14 +540,14 @@ async def mode_menu_handler(event):
     await event.respond(
         f"🔄 **Режим работы**\n\n"
         f"📍 Ваш район: **{district_name}**\n"
-        f"👤 Поточний режим: **{current_mode}**\n\n"
+        f"👤 Текущий режим: **{current_mode}**\n\n"
         f"**Персональный режим:**\n"
         f"🔑 Ключевых слов: {personal_keywords}\n"
-        f"🤖 ML прикладів: {personal_examples}\n\n"
-        f"**Оптимізований режим:**\n"
+        f"🤖 ML примеров: {personal_examples}\n\n"
+        f"**Оптимизированный режим:**\n"
         f"👥 Основан на данных {district_users} пользователей\n"
         f"🔑 Ключевых слов: {optimized_keywords}\n"
-        f"🤖 ML прикладів: {optimized_examples}\n\n"
+        f"🤖 ML примеров: {optimized_examples}\n\n"
         f"💡 Выберите режим:",
         buttons=buttons
     )
@@ -558,12 +564,12 @@ async def mode_personal_callback(event):
         
         await event.edit(
             "✅ **Персональный режим включен!**\n\n"
-            "Используются только ваши ключевые слова и ML приклады.\n\n"
+            "Используются только ваши ключевые слова и ML примеры.\n\n"
             "Используйте кнопку 🔄 Режим для изменения."
         )
         logger.info(f"Пользователь {user_id} переключился на personal режим")
     except Exception as e:
-        logger.error(f"Помилка переключения режима: {e}")
+        logger.error(f"Ошибка переключения режима: {e}")
 
 
 @bot_client.on(events.CallbackQuery(pattern=b'mode_optimized'))
@@ -589,15 +595,15 @@ async def mode_optimized_callback(event):
         db.set_user_mode(user_id, 'optimized')
         
         await event.edit(
-            f"✅ **Оптимізований режим включен!**\n\n"
-            f"🔑 Используется {opt_keywords} ключових слів\n"
-            f"🤖 Используется {opt_examples} ML прикладів\n\n"
+            f"✅ **Оптимизированный режим включен!**\n\n"
+            f"🔑 Используется {opt_keywords} ключевых слов\n"
+            f"🤖 Используется {opt_examples} ML примеров\n\n"
             f"Данные основаны на коллективном опыте пользователей вашего района.\n\n"
             f"Используйте кнопку 🔄 Режим для изменения."
         )
         logger.info(f"Пользователь {user_id} переключился на optimized режим")
     except Exception as e:
-        logger.error(f"Помилка переключения режима: {e}")
+        logger.error(f"Ошибка переключения режима: {e}")
 
 
 @bot_client.on(events.CallbackQuery(pattern=b'main_menu'))
@@ -611,7 +617,7 @@ async def main_menu_callback(event):
             buttons=get_main_menu()
         )
     except Exception as e:
-        logger.error(f"Помилка возврата в меню: {e}")
+        logger.error(f"Ошибка возврата в меню: {e}")
 
 
 # === ОБРАТНАЯ СВЯЗЬ (FEEDBACK) ===
@@ -625,7 +631,7 @@ async def feedback_like_handler(event):
         
         # Удаляем кнопки после нажатия
         await event.edit(buttons=None)
-        await event.answer("✅ Дякуємо за відгук!")
+        await event.answer("✅ Спасибо за отзыв!")
         
         # Очищаем кэш
         message_cache.pop((user_id, msg_id), None)
@@ -633,12 +639,12 @@ async def feedback_like_handler(event):
         logger.info(f"Пользователь {user_id} поставил 👍 сообщению {msg_id}")
         
     except Exception as e:
-        logger.error(f"Помилка обработки like: {e}")
+        logger.error(f"Ошибка обработки like: {e}")
 
 
 @bot_client.on(events.CallbackQuery(pattern=rb'feedback_dislike_(\d+)'))
 async def feedback_dislike_handler(event):
-    """Обработчик негативной обратной связи (👎) - сохраняет как негативный приклад"""
+    """Обработчик негативной обратной связи (👎) - сохраняет как негативный пример"""
     global matcher
     
     try:
@@ -650,62 +656,62 @@ async def feedback_dislike_handler(event):
         message_text = message_cache.get(cache_key)
         
         if not message_text:
-            await event.answer("❌ Повідомлення не знайдено в кэше")
+            await event.answer("❌ Сообщение не найдено в кэше")
             return
         
         # Инициализируем matcher если нужно
         if matcher is None:
             matcher = get_matcher()
         
-        # Создаем embedding для негативного приклада
+        # Создаем embedding для негативного примера
         try:
             embedding = matcher.encode_text(message_text)
             embedding_bytes = MessageMatcher.serialize_embedding(embedding)
             
-            # Сохраняем в БД как негативный приклад
+            # Сохраняем в БД как негативный пример
             if db.add_negative_example(user_id, message_text, embedding_bytes):
-                await event.answer("👎 Сохранено как негативный приклад")
+                await event.answer("👎 Сохранено как негативный пример")
                 await event.edit(buttons=None)
-                logger.info(f"Пользователь {user_id} добавил негативный приклад: '{message_text[:50]}...'")
+                logger.info(f"Пользователь {user_id} добавил негативный пример: '{message_text[:50]}...'")
             else:
-                await event.answer("❌ Помилка сохранения")
+                await event.answer("❌ Ошибка сохранения")
                 
         except Exception as e:
-            logger.error(f"Помилка создания embedding для негативного приклада: {e}")
-            await event.answer("❌ Помилка обработки")
+            logger.error(f"Ошибка создания embedding для негативного примера: {e}")
+            await event.answer("❌ Ошибка обработки")
         
         # Очищаем кэш
         message_cache.pop(cache_key, None)
         
     except Exception as e:
-        logger.error(f"Помилка обработки dislike: {e}")
-        await event.answer("❌ Произошла помилка")
+        logger.error(f"Ошибка обработки dislike: {e}")
+        await event.answer("❌ Произошла ошибка")
 
 
-@bot_client.on(events.NewMessage(pattern='❓ Допомога'))
+@bot_client.on(events.NewMessage(pattern='❓ Помощь'))
 async def help_menu_handler(event):
-    """Довідка"""
+    """Справка"""
     await event.respond(
-        "📖 **Довідка:**\n\n"
-        "**Керування каналуми:**\n"
-        "`/add_channel @durov` - додати\n"
-        "`/remove_channel @durov` - видалити\n\n"
-        "**Ключові слова:**\n"
-        "`/add_keyword біткоїн` - одне слово\n"
-        "`/add_keyword біткоїн,місяць` - група (AND)\n"
-        "`/remove_keyword біткоїн` - видалити\n\n"
-        "**ML приклади:**\n"
-        "`/clear_examples` - видалити всі приклади\n"
+        "📖 **Справка:**\n\n"
+        "**Управление каналами:**\n"
+        "`/add_channel @durov` - добавить\n"
+        "`/remove_channel @durov` - удалить\n\n"
+        "**Ключевые слова:**\n"
+        "`/add_keyword bitcoin` - одно слово\n"
+        "`/add_keyword bitcoin,moon` - группа (AND)\n"
+        "`/remove_keyword bitcoin` - удалить\n\n"
+        "**ML примеры:**\n"
+        "`/clear_examples` - удалить все примеры\n"
         "`/examples_status` - статистика\n\n"
-        "**Зворотний зв'язок:**\n"
-        "👍👎 - оцінюйте повідомлення\n"
-        "`/dislikes_stats` - статистика дизлайків\n"
-        "`/clear_dislikes` - очистити дизлайки\n\n"
-        "**Режими роботи:**\n"
-        "🔄 Режим - перемикання між режимами\n"
-        "• Особистий - ваші дані\n"
-        "• Оптимізований - дані району\n\n"
-        "💡 Групи слів через кому шукають ВСІ слова разом",
+        "**Обратная связь:**\n"
+        "👍👎 - оценивайте сообщения\n"
+        "`/dislikes_stats` - статистика дизлайков\n"
+        "`/clear_dislikes` - очистить дизлайки\n\n"
+        "**Режимы работы:**\n"
+        "🔄 Режим - переключение между режимами\n"
+        "• Personal - ваши данные\n"
+        "• Optimized - данные района\n\n"
+        "💡 Группы слов через запятую ищут ВСЕ слова вместе",
         buttons=get_main_menu()
     )
 
@@ -719,12 +725,12 @@ async def add_channel_text(event):
     
     if db.add_channel(channel):
         await event.respond(
-            f"✅ Канал `{channel}` додано!",
+            f"✅ Канал `{channel}` добавлен!",
             buttons=get_main_menu()
         )
     else:
         await event.respond(
-            f"❌ Канал `{channel}` уже у списку",
+            f"❌ Канал `{channel}` уже в списке",
             buttons=get_main_menu()
         )
 
@@ -736,7 +742,7 @@ async def remove_channel_text(event):
     
     if db.remove_channel(channel):
         await event.respond(
-            f"✅ Канал `{channel}` видалено",
+            f"✅ Канал `{channel}` удален",
             buttons=get_main_menu()
         )
     else:
@@ -762,12 +768,12 @@ async def add_keyword_text(event):
             db.add_district_keyword(district_id, keyword)
         
         await event.respond(
-            f"✅ Слово `{keyword}` доданоо в ваш список!",
+            f"✅ Слово `{keyword}` добавлено в ваш список!",
             buttons=get_main_menu()
         )
     else:
         await event.respond(
-            f"❌ Слово `{keyword}` уже в вашому списку",
+            f"❌ Слово `{keyword}` уже в вашем списке",
             buttons=get_main_menu()
         )
 
@@ -776,7 +782,7 @@ async def add_keyword_text(event):
 
 @bot_client.on(events.NewMessage(func=lambda e: e.is_private and e.forward))
 async def forwarded_message_handler(event):
-    """Обработка пересланных сообщений - доданоие прикладів для ML"""
+    """Обработка пересланных сообщений - добавление примеров для ML"""
     global matcher
     
     user_id = event.sender_id
@@ -814,54 +820,54 @@ async def forwarded_message_handler(event):
         if db.add_user_example(user_id, text, embedding_bytes):
             count = db.get_user_examples_count(user_id)
             await event.respond(
-                f"✅ **Пример додано!**\n\n"
-                f"Всього прикладів: **{count}**\n\n"
-                f"💡 Бот будет искать похожие сообщения в каналух",
+                f"✅ **Пример добавлен!**\n\n"
+                f"Всего примеров: **{count}**\n\n"
+                f"💡 Бот будет искать похожие сообщения в каналах",
                 buttons=get_main_menu()
             )
         else:
             await event.respond(
-                "❌ Помилка сохранения приклада",
+                "❌ Ошибка сохранения примера",
                 buttons=get_main_menu()
             )
     except Exception as e:
-        logger.error(f"Помилка обработки приклада: {e}")
+        logger.error(f"Ошибка обработки примера: {e}")
         await event.respond(
-            f"❌ Помилка: {e}",
+            f"❌ Ошибка: {e}",
             buttons=get_main_menu()
         )
 
 
 @bot_client.on(events.NewMessage(pattern='/clear_examples'))
 async def clear_examples_handler(event):
-    """Очистить все приклады пользователя"""
+    """Очистить все примеры пользователя"""
     user_id = event.sender_id
     
     if db.clear_user_examples(user_id):
         await event.respond(
-            "✅ Все приклады видаленоы",
+            "✅ Все примеры удалены",
             buttons=get_main_menu()
         )
     else:
         await event.respond(
-            "❌ Помилка видаленоия прикладів",
+            "❌ Ошибка удаления примеров",
             buttons=get_main_menu()
         )
 
 
 @bot_client.on(events.NewMessage(pattern='/dislikes_stats'))
 async def dislikes_stats_handler(event):
-    """Показать статистику негативных прикладів (дизлайків)"""
+    """Показать статистику негативных примеров (дизлайков)"""
     user_id = event.sender_id
     
     count = db.get_negative_examples_count(user_id)
     negative_examples = db.get_negative_examples(user_id)
     
-    response = f"👎 **Негативные приклады (дизлайки):**\n\n"
-    response += f"Всього: **{count}**\n\n"
+    response = f"👎 **Негативные примеры (дизлайки):**\n\n"
+    response += f"Всего: **{count}**\n\n"
     
     if negative_examples:
-        response += "📋 **Последние приклады:**\n"
+        response += "📋 **Последние примеры:**\n"
         for text, _ in negative_examples[:5]:  # Показываем первые 5
             preview = text[:60] + "..." if len(text) > 60 else text
             response += f"• {preview}\n"
@@ -869,25 +875,25 @@ async def dislikes_stats_handler(event):
         if count > 5:
             response += f"\n_...и ещё {count - 5}_"
     else:
-        response += "⚠️ У вас поки немає негативных прикладів\n\n"
-        response += "💡 Натискайте 👎 на нерелевантних повідомленнях, щоб покращити фільтрацію"
+        response += "⚠️ У вас пока нет негативных примеров\n\n"
+        response += "💡 Нажимайте 👎 на нерелевантных сообщениях, чтобы улучшить фильтрацию"
     
     await event.respond(response, buttons=get_main_menu())
 
 
 @bot_client.on(events.NewMessage(pattern='/clear_dislikes'))
 async def clear_dislikes_handler(event):
-    """Очистить все негативные приклады (дизлайки)"""
+    """Очистить все негативные примеры (дизлайки)"""
     user_id = event.sender_id
     
     if db.clear_negative_examples(user_id):
         await event.respond(
-            "✅ Все негативные приклады видаленоы",
+            "✅ Все негативные примеры удалены",
             buttons=get_main_menu()
         )
     else:
         await event.respond(
-            "❌ Помилка видаленоия негативных прикладів",
+            "❌ Ошибка удаления негативных примеров",
             buttons=get_main_menu()
         )
 
@@ -899,13 +905,13 @@ async def examples_status_handler(event):
     user_id = event.sender_id
     
     count = db.get_user_examples_count(user_id)
-    ml_status = "✅ Завантажена" if matcher is not None else "⏳ Не завантажена (загрузится при первом прикладе)"
+    ml_status = "✅ Загружена" if matcher is not None else "⏳ Не загружена (загрузится при первом примере)"
     
     await event.respond(
         f"🤖 **Статус ML:**\n\n"
         f"ML модель: {ml_status}\n"
-        f"Ваших прикладів: **{count}**\n\n"
-        f"{'✅ ML активний и шукає схожі повідомлення' if count > 0 else '⚠️ Добавьте приклады, переславши повідомлення боту'}",
+        f"Ваших примеров: **{count}**\n\n"
+        f"{'✅ ML активен и ищет похожие сообщения' if count > 0 else '⚠️ Добавьте примеры, переслав сообщения боту'}",
         buttons=get_main_menu()
     )
 
@@ -918,12 +924,12 @@ async def remove_keyword_text(event):
     
     if db.remove_user_keyword(user_id, keyword):
         await event.respond(
-            f"✅ Слово `{keyword}` видаленоо из вашого списку",
+            f"✅ Слово `{keyword}` удалено из вашего списка",
             buttons=get_main_menu()
         )
     else:
         await event.respond(
-            f"❌ Слово `{keyword}` не найдено в вашому списку",
+            f"❌ Слово `{keyword}` не найдено в вашем списке",
             buttons=get_main_menu()
         )
 
@@ -942,7 +948,7 @@ async def set_target_text(event):
         )
     else:
         await event.respond(
-            "❌ Помилка установки",
+            "❌ Ошибка установки",
             buttons=get_main_menu()
         )
 
@@ -951,12 +957,12 @@ async def set_target_text(event):
 
 @user_client.on(events.NewMessage())
 async def message_handler(event):
-    """Обработчик новых сообщений из отслеживаемых каналів"""
+    """Обработчик новых сообщений из отслеживаемых каналов"""
     # Пропускаем личные сообщения
     if event.is_private:
         return
     
-    # Проверяем, что сообщение из отслеживаемого каналу
+    # Проверяем, что сообщение из отслеживаемого канала
     channels = db.get_channels()
     chat_username = f"@{event.chat.username}" if event.chat.username else None
     
@@ -1005,7 +1011,7 @@ async def message_handler(event):
                             matched_keywords = True
                             matched_keyword_list.append(keyword)
                 
-                # Проверка 2: ML сходство (если есть приклады)
+                # Проверка 2: ML сходство (если есть примеры)
                 matched_ml = False
                 ml_similarity = 0.0
                 
@@ -1031,19 +1037,19 @@ async def message_handler(event):
                                 sim = matcher.cosine_similarity(text_embedding, example_emb)
                                 ml_similarity = max(ml_similarity, sim)
                     except Exception as e:
-                        logger.error(f"Помилка ML проверки для пользователя {user_id}: {e}")
+                        logger.error(f"Ошибка ML проверки для пользователя {user_id}: {e}")
                 
-                # Проверка 3: Негативные приклады (фильтрация ложных срабатываний)
+                # Проверка 3: Негативные примеры (фильтрация ложных срабатываний)
                 blocked_by_negative = False
                 max_negative_similarity = 0.0
                 
                 if (matched_keywords or matched_ml) and matcher is not None:
                     try:
-                        # Получаем негативные приклады пользователя
+                        # Получаем негативные примеры пользователя
                         negative_examples = db.get_negative_examples(user_id)
                         
                         if negative_examples:
-                            # Десериализуем embeddings негативных прикладів
+                            # Десериализуем embeddings негативных примеров
                             negative_embeddings = [
                                 MessageMatcher.deserialize_embedding(emb_bytes)
                                 for _, emb_bytes in negative_examples
@@ -1052,16 +1058,16 @@ async def message_handler(event):
                             # Создаем embedding текущего сообщения
                             text_embedding = matcher.encode_text(message_text)
                             
-                            # Проверяем схожесть с негативными прикладами
+                            # Проверяем схожесть с негативными примерами
                             for neg_emb in negative_embeddings:
                                 sim = matcher.cosine_similarity(text_embedding, neg_emb)
                                 max_negative_similarity = max(max_negative_similarity, sim)
                             
-                            # Блокируем если слишком похоже на негативный приклад
+                            # Блокируем если слишком похоже на негативный пример
                             if max_negative_similarity > 0.85:
                                 blocked_by_negative = True
                                 logger.info(
-                                    f"Сообщение заблокировано негативным прикладом для пользователя {user_id} "
+                                    f"Сообщение заблокировано негативным примером для пользователя {user_id} "
                                     f"(similarity: {max_negative_similarity:.2%})"
                                 )
                             # Дополнительная проверка: если позитивное совпадение слабое, а негативное сильное
@@ -1073,11 +1079,32 @@ async def message_handler(event):
                                 )
                                 
                     except Exception as e:
-                        logger.error(f"Помилка проверки негативных прикладів для пользователя {user_id}: {e}")
+                        logger.error(f"Ошибка проверки негативных примеров для пользователя {user_id}: {e}")
                 
                 # Если совпало ИЛИ по ключевым словам ИЛИ по ML - отправляем (если не заблокировано)
                 if (matched_keywords or matched_ml) and not blocked_by_negative:
                     try:
+                        # === НОВЫЙ БЛОК: АНАЛИЗ КОНТЕКСТА ===
+                        context_info = None
+                        try:
+                            trigger_message_data = {
+                                'id': event.message.id,
+                                'text': message_text,
+                                'channel': chat_username
+                            }
+                            context_info = context_analyzer.analyze_context(trigger_message_data)
+                        except Exception as e:
+                            logger.error(f"Ошибка анализа контекста: {e}")
+                        # ======================================
+
+                        # Формируем итоговое сообщение
+                        final_message = f"**Оригінальне повідомлення:**\n{message_text}"
+                        if context_info and context_info['confidence'] > 0.5:
+                            final_message = f"**Контекст події:**\n{context_info['summary']}\n\n" + final_message
+                            if context_info['related_links']:
+                                links_text = "\n".join([f"• [Джерело]({link})" for link in context_info['related_links']])
+                                final_message += f"\n\n**Схожі повідомлення:**\n{links_text}"
+
                         # Создаем кнопки для обратной связи
                         msg_id = event.message.id
                         feedback_buttons = [
@@ -1091,9 +1118,10 @@ async def message_handler(event):
                         # Отправляем копию сообщения с кнопками
                         await bot_client.send_message(
                             user_id,
-                            event.message.text or "",
+                            final_message,
                             buttons=feedback_buttons,
-                            file=event.message.media if event.message.media else None
+                            file=event.message.media if event.message.media else None,
+                            link_preview=False # Отключаем превью ссылок
                         )
                         
                         match_reason = []
@@ -1109,13 +1137,13 @@ async def message_handler(event):
                             f"[{mode_label}] ({', '.join(match_reason)})"
                         )
                     except Exception as e:
-                        logger.error(f"Помилка отправки пользователю {user_id}: {e}")
+                        logger.error(f"Ошибка отправки пользователю {user_id}: {e}")
                         
             except Exception as e:
-                logger.error(f"Помилка обработки для пользователя {user_id}: {e}")
+                logger.error(f"Ошибка обработки для пользователя {user_id}: {e}")
             
     except Exception as e:
-        logger.error(f"Помилка обработки сообщения: {e}")
+        logger.error(f"Ошибка обработки сообщения: {e}")
 
 
 # === АДМИН-КОМАНДЫ ===
@@ -1148,15 +1176,40 @@ async def admin_optimize_handler(event):
                 f"📍 **{district_name}**\n"
                 f"   👥 Пользователей: {users_count}\n"
                 f"   🔑 Ключевых слов: {keywords_count}\n"
-                f"   🤖 ML прикладів: {examples_count}\n\n"
+                f"   🤖 ML примеров: {examples_count}\n\n"
             )
         
         await event.respond(response)
         logger.info(f"Админ {user_id} выполнил оптимизацию")
         
     except Exception as e:
-        logger.error(f"Помилка оптимизации: {e}", exc_info=True)
-        await event.respond(f"❌ Помилка при оптимизации: {e}")
+        logger.error(f"Ошибка оптимизации: {e}", exc_info=True)
+        await event.respond(f"❌ Ошибка при оптимизации: {e}")
+
+
+@bot_client.on(events.NewMessage(pattern='/admin_load_history'))
+async def admin_load_history_handler(event):
+    """Загрузить историю сообщений из каналов (только для админа)"""
+    user_id = event.sender_id
+    if user_id != ADMIN_ID:
+        await event.respond("⛔ Эта команда доступна только администратору")
+        return
+
+    await event.respond("⏳ **Начинаю фоновую загрузку истории сообщений...**\n\nЭто может занять много времени. Я сообщу, когда закончу.")
+    
+    # Запускаем загрузку в фоновом режиме
+    asyncio.create_task(run_history_loader(user_id))
+
+
+async def run_history_loader(admin_user_id):
+    """Асинхронная задача для выполнения загрузки истории"""
+    try:
+        loader = HistoryLoader(user_client, db)
+        await loader.load_history_for_all_channels(months_ago=2)
+        await bot_client.send_message(admin_user_id, "✅ **Фоновая загрузка истории завершена!**")
+    except Exception as e:
+        logger.error(f"Критическая ошибка в run_history_loader: {e}", exc_info=True)
+        await bot_client.send_message(admin_user_id, f"❌ **Ошибка при загрузке истории:**\n\n`{e}`")
 
 
 @bot_client.on(events.NewMessage(pattern='/admin_stats'))
@@ -1189,10 +1242,10 @@ async def admin_stats_handler(event):
         total_examples = sum(ex for _, _, _, ex in active_stats)
         
         response += f"**Общая статистика:**\n"
-        response += f"👥 Всього пользователей: {total_users}\n"
+        response += f"👥 Всего пользователей: {total_users}\n"
         response += f"🗺️ Активных районов: {len(active_stats)}\n"
         response += f"🔑 Уникальных слов: {total_keywords}\n"
-        response += f"🤖 ML прикладів: {total_examples}\n\n"
+        response += f"🤖 ML примеров: {total_examples}\n\n"
         
         response += "**Топ-10 районов:**\n\n"
         
@@ -1206,8 +1259,8 @@ async def admin_stats_handler(event):
         logger.info(f"Админ {user_id} запросил статистику")
         
     except Exception as e:
-        logger.error(f"Помилка получения статистики: {e}", exc_info=True)
-        await event.respond(f"❌ Помилка: {e}")
+        logger.error(f"Ошибка получения статистики: {e}", exc_info=True)
+        await event.respond(f"❌ Ошибка: {e}")
 
 
 # === ЗАПУСК БОТА ===
@@ -1220,11 +1273,11 @@ async def main():
     
     # Проверка конфигурации
     if not API_ID or not API_HASH or not PHONE:
-        logger.error("Помилка: не заданы API_ID, API_HASH или PHONE в файле .env")
+        logger.error("Ошибка: не заданы API_ID, API_HASH или PHONE в файле .env")
         return
     
     if not BOT_TOKEN:
-        logger.error("Помилка: не задан BOT_TOKEN в файле .env")
+        logger.error("Ошибка: не задан BOT_TOKEN в файле .env")
         return
     
     # Запускаем user-аккаунт для парсинга
@@ -1237,12 +1290,12 @@ async def main():
     
     # Инициализация БД из .env при первом запуске
     if not db.get_channels() and CHANNELS:
-        logger.info("Импорт начальных каналів из .env...")
+        logger.info("Импорт начальных каналов из .env...")
         for channel in CHANNELS:
             db.add_channel(channel)
     
     if not db.get_keywords() and KEYWORDS:
-        logger.info("Импорт начальных ключових слів из .env...")
+        logger.info("Импорт начальных ключевых слов из .env...")
         for keyword in KEYWORDS:
             db.add_keyword(keyword)
     
@@ -1255,10 +1308,10 @@ async def main():
     target = db.get_target_channel()
     
     if not channels:
-        logger.warning("⚠️ Нет каналів для мониторинга. Добавьте каналы через /add_channel")
+        logger.warning("⚠️ Нет каналов для мониторинга. Добавьте каналы через /add_channel")
     
     if not keywords:
-        logger.warning("⚠️ Нет ключових слів. Добавьте слова через /add_keyword")
+        logger.warning("⚠️ Нет ключевых слов. Добавьте слова через /add_keyword")
     
     # Получаем информацию о боте
     bot_me = await bot_client.get_me()

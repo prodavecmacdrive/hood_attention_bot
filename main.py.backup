@@ -1,0 +1,448 @@
+from telethon import TelegramClient, events, Button
+from config import API_ID, API_HASH, PHONE, CHANNELS, KEYWORDS, TARGET_CHANNEL
+from database import Database
+import logging
+
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Создание клиента и БД
+client = TelegramClient('bot_session', API_ID, API_HASH)
+db = Database()
+
+# ID администратора (ваш ID в Telegram)
+ADMIN_ID = None  # Будет установлен при запуске
+
+
+# === МЕНЮ С КНОПКАМИ ===
+
+def get_main_menu():
+    """Главное меню с постоянными кнопками"""
+    return [
+        [Button.text("📺 Каналы", resize=True), Button.text("🔑 Слова", resize=True)],
+        [Button.text("⚙️ Настройки", resize=True), Button.text("📊 Статус", resize=True)],
+        [Button.text("❓ Помощь", resize=True)]
+    ]
+
+
+# === КОМАНДЫ ===
+
+@client.on(events.NewMessage(pattern='/start'))
+async def start_handler(event):
+    """Команда /start с главным меню"""
+    if event.is_private:
+        # Проверяем, пишем ли мы себе (в Saved Messages)
+        is_self = event.chat_id == ADMIN_ID
+        
+        message = (
+            "🤖 **Бот для мониторинга Telegram каналов**\n\n"
+            "**Команды управления каналами:**\n"
+            "/add_channel @username - добавить канал\n"
+            "/remove_channel @username - удалить канал\n"
+            "/list_channels - список каналов\n\n"
+            "**Команды управления ключевыми словами:**\n"
+            "/add_keyword слово - добавить слово\n"
+            "/add_keyword слово1,слово2 - группа (AND)\n"
+            "/remove_keyword слово - удалить\n"
+            "/list_keywords - список слов\n\n"
+            "**Настройки:**\n"
+            "/set_target @channel - целевой канал\n"
+            "/status - статус бота\n"
+            "/help - помощь"
+        )
+        
+        # Если это не самому себе, пробуем кнопки
+        if not is_self:
+            await event.respond(message, buttons=get_main_menu())
+        else:
+            await event.respond(message)
+
+
+@client.on(events.NewMessage(pattern='/menu'))
+async def menu_handler(event):
+    """Команда /menu"""
+    if event.is_private:
+        await event.respond("📱 **Главное меню:**", buttons=get_main_menu())
+
+
+# === ОБРАБОТЧИКИ КНОПОК ===
+
+@client.on(events.CallbackQuery(data=b"main_menu"))
+async def main_menu_callback(event):
+    """Возврат в главное меню"""
+    await event.edit("📱 **Главное меню:**", buttons=get_main_menu())
+
+
+@client.on(events.CallbackQuery(data=b"menu_channels"))
+async def channels_menu_callback(event):
+    """Меню каналов"""
+    await event.edit("📺 **Управление каналами:**", buttons=get_channels_menu())
+
+
+@client.on(events.CallbackQuery(data=b"menu_keywords"))
+async def keywords_menu_callback(event):
+    """Меню ключевых слов"""
+    await event.edit(
+        "🔑 **Управление ключевыми словами:**\n\n"
+        "💡 Можно добавить одно слово или несколько через запятую.\n"
+        "Если слова через запятую - они ищутся вместе (AND).",
+        buttons=get_keywords_menu()
+    )
+
+
+@client.on(events.CallbackQuery(data=b"menu_settings"))
+async def settings_menu_callback(event):
+    """Меню настроек"""
+    target = db.get_target_channel()
+    await event.edit(
+        f"⚙️ **Настройки:**\n\nТекущий целевой канал: `{target}`",
+        buttons=get_settings_menu()
+    )
+
+
+@client.on(events.CallbackQuery(data=b"show_status"))
+async def status_callback(event):
+    """Показать статус"""
+    channels_count, keywords_count = db.get_stats()
+    target = db.get_target_channel()
+    
+    await event.edit(
+        f"� **Статус бота:**\n\n"
+        f"📺 Каналов в мониторинге: **{channels_count}**\n"
+        f"🔑 Групп ключевых слов: **{keywords_count}**\n"
+        f"🎯 Целевой канал: `{target}`\n\n"
+        f"✅ Бот работает",
+        buttons=[[Button.inline("🔙 Назад", b"main_menu")]]
+    )
+
+
+# === ДЕЙСТВИЯ С КАНАЛАМИ ===
+
+@client.on(events.CallbackQuery(data=b"list_channels"))
+async def list_channels_callback(event):
+    """Список каналов"""
+    channels = db.get_channels()
+    if channels:
+        channel_list = '\n'.join([f"• `{ch}`" for ch in channels])
+        await event.edit(
+            f"📋 **Отслеживаемые каналы ({len(channels)}):**\n\n{channel_list}",
+            buttons=[[Button.inline("🔙 Назад", b"menu_channels")]]
+        )
+    else:
+        await event.edit(
+            "📋 Список каналов пуст.",
+            buttons=[[Button.inline("🔙 Назад", b"menu_channels")]]
+        )
+
+
+@client.on(events.CallbackQuery(data=b"add_channel"))
+async def add_channel_callback(event):
+    """Запрос на добавление канала"""
+    await event.edit(
+        "➕ **Добавить канал**\n\n"
+        "Отправьте username канала (например: @durov или durov)",
+        buttons=[[Button.inline("❌ Отмена", b"menu_channels")]]
+    )
+    # Ждем следующее сообщение
+    
+
+@client.on(events.CallbackQuery(data=b"remove_channel"))
+async def remove_channel_callback(event):
+    """Запрос на удаление канала"""
+    await event.edit(
+        "➖ **Удалить канал**\n\n"
+        "Отправьте username канала для удаления",
+        buttons=[[Button.inline("❌ Отмена", b"menu_channels")]]
+    )
+
+
+# Обработка текстовых команд (для добавления/удаления)
+@client.on(events.NewMessage(pattern=r'/add_channel\s+(.+)'))
+async def add_channel_text(event):
+    """Добавить канал через команду"""
+    if not event.is_private:
+        return
+    
+    channel = event.pattern_match.group(1).strip()
+    
+    if db.add_channel(channel):
+        try:
+            channels = db.get_channels()
+            client.remove_event_handler(message_handler)
+            client.add_event_handler(message_handler, events.NewMessage())
+            
+            await event.respond(
+                f"✅ Канал `{channel}` добавлен!",
+                buttons=get_main_menu()
+            )
+        except Exception as e:
+            await event.respond(f"⚠️ Канал добавлен, но ошибка: {e}")
+    else:
+        await event.respond(f"❌ Канал `{channel}` уже в списке")
+
+
+@client.on(events.NewMessage(pattern=r'/remove_channel\s+(.+)'))
+async def remove_channel_text(event):
+    """Удалить канал через команду"""
+    if not event.is_private:
+        return
+    
+    channel = event.pattern_match.group(1).strip()
+    
+    if db.remove_channel(channel):
+        await event.respond(
+            f"✅ Канал `{channel}` удален",
+            buttons=get_main_menu()
+        )
+    else:
+        await event.respond(f"❌ Канал `{channel}` не найден")
+
+
+# === ДЕЙСТВИЯ С КЛЮЧЕВЫМИ СЛОВАМИ ===
+
+@client.on(events.CallbackQuery(data=b"list_keywords"))
+async def list_keywords_callback(event):
+    """Список ключевых слов"""
+    keywords = db.get_keywords()
+    if keywords:
+        keyword_list = '\n'.join([f"• `{kw}` {'(AND)' if ',' in kw else ''}" for kw in keywords])
+        await event.edit(
+            f"🔑 **Группы ключевых слов ({len(keywords)}):**\n\n{keyword_list}\n\n"
+            f"💡 Группы через запятую ищут ВСЕ слова в сообщении",
+            buttons=[[Button.inline("🔙 Назад", b"menu_keywords")]]
+        )
+    else:
+        await event.edit(
+            "🔑 Список ключевых слов пуст.",
+            buttons=[[Button.inline("🔙 Назад", b"menu_keywords")]]
+        )
+
+
+@client.on(events.CallbackQuery(data=b"add_keyword"))
+async def add_keyword_callback(event):
+    """Запрос на добавление слов"""
+    await event.edit(
+        "➕ **Добавить ключевые слова**\n\n"
+        "Примеры:\n"
+        "`bitcoin` - одно слово\n"
+        "`bitcoin,crypto` - оба слова (AND)\n\n"
+        "Отправьте слово или группу слов:",
+        buttons=[[Button.inline("❌ Отмена", b"menu_keywords")]]
+    )
+
+
+@client.on(events.CallbackQuery(data=b"remove_keyword"))
+async def remove_keyword_callback(event):
+    """Запрос на удаление слов"""
+    await event.edit(
+        "➖ **Удалить ключевые слова**\n\n"
+        "Отправьте слово или группу для удаления:",
+        buttons=[[Button.inline("❌ Отмена", b"menu_keywords")]]
+    )
+
+
+@client.on(events.NewMessage(pattern=r'/add_keyword\s+(.+)'))
+async def add_keyword_text(event):
+    """Добавить ключевые слова"""
+    if not event.is_private:
+        return
+    
+    keyword = event.pattern_match.group(1).strip()
+    
+    if db.add_keyword(keyword):
+        # Форматируем для отображения
+        normalized = ','.join([w.strip().lower() for w in keyword.split(',') if w.strip()])
+        msg = f"✅ Группа `{normalized}` добавлена!"
+        if ',' in normalized:
+            msg += "\n\n💡 Будут искаться сообщения содержащие ВСЕ эти слова"
+        await event.respond(msg, buttons=get_main_menu())
+    else:
+        await event.respond(f"❌ Эта группа уже существует")
+
+
+@client.on(events.NewMessage(pattern=r'/remove_keyword\s+(.+)'))
+async def remove_keyword_text(event):
+    """Удалить ключевые слова"""
+    if not event.is_private:
+        return
+    
+    keyword = event.pattern_match.group(1).strip()
+    
+    if db.remove_keyword(keyword):
+        await event.respond(
+            f"✅ Группа удалена",
+            buttons=get_main_menu()
+        )
+    else:
+        await event.respond(f"❌ Группа не найдена")
+
+
+# === НАСТРОЙКИ ===
+
+@client.on(events.CallbackQuery(data=b"set_target"))
+async def set_target_callback(event):
+    """Запрос на установку целевого канала"""
+    await event.edit(
+        "🎯 **Установить целевой канал**\n\n"
+        "Отправьте username канала или 'me' для Избранного:",
+        buttons=[[Button.inline("❌ Отмена", b"menu_settings")]]
+    )
+
+
+@client.on(events.NewMessage(pattern=r'/set_target\s+(.+)'))
+async def set_target_text(event):
+    """Установить целевой канал"""
+    if not event.is_private:
+        return
+    
+    target = event.pattern_match.group(1).strip()
+    
+    if db.set_target_channel(target):
+        await event.respond(
+            f"✅ Целевой канал: `{target}`",
+            buttons=get_main_menu()
+        )
+    else:
+        await event.respond("❌ Ошибка установки")
+
+
+@client.on(events.NewMessage(pattern='/help'))
+async def help_handler(event):
+    """Справка"""
+    if event.is_private:
+        await event.respond(
+            "📖 **Справка:**\n\n"
+            "**Команды:**\n"
+            "/start - главное меню\n"
+            "/menu - показать меню\n"
+            "/help - эта справка\n\n"
+            "**Быстрые команды:**\n"
+            "/add_channel @durov\n"
+            "/remove_channel @durov\n"
+            "/add_keyword bitcoin\n"
+            "/add_keyword bitcoin,crypto (AND)\n"
+            "/remove_keyword bitcoin\n"
+            "/set_target @mychannel\n\n"
+            "💡 Используйте кнопки для удобства!",
+            buttons=get_main_menu()
+        )
+
+# === ОБРАБОТЧИК СООБЩЕНИЙ ===
+
+@client.on(events.NewMessage())
+async def message_handler(event):
+    """Обработчик новых сообщений из отслеживаемых каналов"""
+    # Пропускаем личные сообщения (это команды)
+    if event.is_private:
+        return
+    
+    # Проверяем, что сообщение из отслеживаемого канала
+    channels = db.get_channels()
+    chat_username = f"@{event.chat.username}" if event.chat.username else None
+    
+    if not chat_username or chat_username not in channels:
+        return
+    
+    try:
+        message_text = event.message.text
+        
+        if not message_text:
+            return
+            
+        message_lower = message_text.lower()
+        keyword_groups = db.get_keywords()
+        
+        # Проверка на наличие ключевых слов
+        matched_groups = []
+        
+        for group in keyword_groups:
+            # Разделяем группу на отдельные слова
+            words = [w.strip() for w in group.split(',')]
+            
+            # Проверяем: если это группа (AND), то все слова должны быть в сообщении
+            if len(words) > 1:
+                # AND - все слова должны быть
+                if all(word in message_lower for word in words):
+                    matched_groups.append(group)
+            else:
+                # Одно слово
+                if words[0] in message_lower:
+                    matched_groups.append(group)
+        
+        if matched_groups:
+            logger.info(f"Найдено совпадение: {matched_groups}")
+            logger.info(f"Канал: {chat_username}")
+            
+            target_channel = db.get_target_channel()
+            
+            # Пересылаем (forward) сообщение в целевой канал
+            await client.forward_messages(
+                target_channel,
+                event.message
+            )
+            
+            logger.info(f"Сообщение переслано в {target_channel}")
+            
+    except Exception as e:
+        logger.error(f"Ошибка обработки сообщения: {e}")
+
+
+async def main():
+    """Запуск бота"""
+    global ADMIN_ID
+    
+    logger.info("Запуск бота...")
+    
+    # Проверка конфигурации
+    if not API_ID or not API_HASH or not PHONE:
+        logger.error("Ошибка: не заданы API_ID, API_HASH или PHONE в файле .env")
+        return
+    
+    await client.start(phone=PHONE)
+    
+    # Получаем ID администратора (вас)
+    me = await client.get_me()
+    ADMIN_ID = me.id
+    logger.info(f"Авторизован как: {me.first_name} (ID: {ADMIN_ID})")
+    
+    # Инициализация БД из .env при первом запуске
+    if not db.get_channels() and CHANNELS:
+        logger.info("Импорт начальных каналов из .env...")
+        for channel in CHANNELS:
+            db.add_channel(channel)
+    
+    if not db.get_keywords() and KEYWORDS:
+        logger.info("Импорт начальных ключевых слов из .env...")
+        for keyword in KEYWORDS:
+            db.add_keyword(keyword)
+    
+    if TARGET_CHANNEL:
+        db.set_target_channel(TARGET_CHANNEL)
+    
+    # Получаем текущие настройки из БД
+    channels = db.get_channels()
+    keywords = db.get_keywords()
+    target = db.get_target_channel()
+    
+    if not channels:
+        logger.warning("⚠️ Нет каналов для мониторинга. Добавьте каналы через /add_channel")
+    
+    if not keywords:
+        logger.warning("⚠️ Нет ключевых слов. Добавьте слова через /add_keyword")
+    
+    logger.info("Бот успешно запущен!")
+    logger.info(f"📺 Отслеживаемые каналы ({len(channels)}): {channels}")
+    logger.info(f"🔑 Ключевые слова ({len(keywords)}): {keywords}")
+    logger.info(f"🎯 Целевой канал: {target}")
+    logger.info("💬 Используйте команды в личных сообщениях с ботом для управления")
+    logger.info("Ожидание новых сообщений...")
+    
+    await client.run_until_disconnected()
+
+
+if __name__ == '__main__':
+    client.loop.run_until_complete(main())

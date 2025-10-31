@@ -1,0 +1,19 @@
+﻿python : ┴рчр фрээ√ї шэшЎшрышчшЁютрэр
+At line:1 char:1
++ python test_database_method.py 2>&1 | Out-File -Encoding utf8 -FilePa ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (┴рчр фрээ√ї шэшЎшрышчшЁютрэр:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+=== ╥хёЄ ьхЄюфр search_districts ===
+
+╟ряЁюё: "ёрыЄ"
+repr: 'ёрыЄ'
+╨хчєы№ЄрЄ: 0 Ёрщюэют
+
+==================================================
+
+╟ряЁюё: "salt"
+repr: 'salt'
+╨хчєы№ЄрЄ: 1 Ёрщюэют
+  (63, 'Saltovka Test', [])

@@ -1,55 +1,76 @@
 # Environment variables
 .env
+.env.local
+.env.production
 
-# Telegram session files (СЕКРЕТНО!)
+# Telegram sessions
 *.session
 *.session-journal
+bot_session.session
+bot.session
 
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
-*.pyc
 *.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Virtual Environment
+# Virtual environments
 venv/
-ENV/
+.venv/
 env/
+ENV/
+
+# Database files
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+bot_config.db*
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# Database (может содержать личные данные)
-telegram_bot.db
-telegram_bot.db-shm
-telegram_bot.db-wal
-*.db
-*.db-shm
-*.db-wal
-
-# Configuration (API ключи - СЕКРЕТНО!)
-config.py
+*~
 
 # OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
-desktop.ini
 
 # Logs
 *.log
+logs/
+attention_bot.log
 
-# Test outputs
-test_output.txt
-test_debug.txt
-
-# Backup files
-*.backup
-
-# ML models cache
+# Temporary files
+*.tmp
+*.temp
 .cache/
-models/
-sentence-transformers/
+
+# AWS
+.aws/
+credentials
