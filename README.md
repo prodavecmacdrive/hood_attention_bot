@@ -58,7 +58,131 @@ python main.py
 - Номер телефона для Telegram аккаунта
 - Права администратора в целевом канале
 
-## Важно
+## AWS Free Tier Deployment
 
-⚠️ Не коммитьте файлы `.env` и `*.session` в Git!
-⚠️ Соблюдайте лимиты Telegram API (не более 20 запросов за 10 секунд)
+### Prerequisites
+- AWS Account with Free Tier eligibility
+- GitHub repository with this code
+- Telegram API credentials
+
+### 1. Launch EC2 Instance
+1. Go to AWS EC2 Console
+2. Launch Instance:
+   - AMI: Ubuntu Server 22.04 LTS (free tier)
+   - Instance Type: t2.micro (free tier)
+   - Storage: 30GB (default)
+   - Security Group: Allow SSH (22) and HTTP (80) if needed
+
+### 2. Connect to Instance
+```bash
+ssh -i your-key.pem ubuntu@your-instance-ip
+```
+
+### 3. Install Dependencies
+```bash
+sudo apt update
+sudo apt install -y python3 python3-pip python3-venv git
+```
+
+### 4. Clone Repository
+```bash
+git clone https://github.com/your-username/hood_attention_bot.git
+cd hood_attention_bot
+git checkout server-deployment
+```
+
+### 5. Setup Virtual Environment
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 6. Configure Environment
+```bash
+cp .env.example .env
+nano .env  # Edit with your credentials
+```
+
+### 7. First Run (Authorization)
+```bash
+python3 main.py
+```
+Follow the prompts to authorize with Telegram.
+
+### 8. Setup Systemd Service
+```bash
+sudo cp hood_bot.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable hood_bot
+sudo systemctl start hood_bot
+```
+
+### 9. Check Status
+```bash
+sudo systemctl status hood_bot
+journalctl -u hood_bot -f  # View logs
+```
+
+### Memory Considerations
+- The ML model requires ~471MB RAM
+- t2.micro has 1GB RAM total
+- Monitor memory usage: `free -h`
+- Consider lighter models if needed
+
+### Backup Strategy
+- Session files are critical - backup regularly
+- Database files should be backed up
+- Consider using StringSession for cloud deployments
+
+## AWS Free Tier Deployment
+
+### Prerequisites
+- AWS Account with Free Tier eligibility
+- GitHub repository with this code
+- Telegram API credentials
+
+### 1. Launch EC2 Instance
+1. Go to AWS EC2 Console
+2. Launch Instance:
+   - AMI: Ubuntu Server 22.04 LTS (free tier)
+   - Instance Type: t2.micro (free tier)
+   - Storage: 30GB (default)
+   - Security Group: Allow SSH (22) and HTTP (80) if needed
+
+### 2. Connect to Instance
+```bash
+ssh -i your-key.pem ubuntu@your-instance-ip
+```
+
+### 3. Install Dependencies
+```bash
+sudo apt update
+sudo apt install -y python3 python3-pip python3-venv git
+```
+
+### 4. Clone Repository
+```bash
+git clone https://github.com/your-username/hood_attention_bot.git
+cd hood_attention_bot
+git checkout server-deployment
+```
+
+### 5. Setup Virtual Environment
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 6. Configure Environment
+```bash
+cp .env.example .env
+nano .env  # Edit with your credentials
+```
+
+### 7. First Run (Authorization)
+```bash
+python3 main.py
+```
+Follow the prompts to authorize with Telegram.
